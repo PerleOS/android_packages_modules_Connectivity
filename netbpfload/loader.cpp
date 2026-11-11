@@ -79,6 +79,25 @@ using std::optional;
 using std::string;
 using std::vector;
 
+// Upstream Linux accepts map_name / prog_name in bpf_attr from 4.15 only. Android common
+// kernels 4.14 carry the backport, but some vendor 4.14 kernels do not and reject any request
+// that sets a name (BPF_MAP_CREATE: EINVAL, BPF_PROG_LOAD: E2BIG). Names are informational,
+// so probe once and only set them when the running kernel accepts them.
+static bool kernelSupportsBpfObjectNames() {
+    static const bool supported = [] {
+        union bpf_attr req = {
+            .map_type = BPF_MAP_TYPE_ARRAY,
+            .key_size = sizeof(int),
+            .value_size = sizeof(int),
+            .max_entries = 1,
+        };
+        strlcpy(req.map_name, "name_probe", sizeof(req.map_name));
+        unique_fd fd(android::bpf::bpf(BPF_MAP_CREATE, req));
+        return fd.ok();
+    }();
+    return supported;
+}
+
 namespace android {
 namespace bpf {
 
@@ -784,7 +803,7 @@ static int createMaps(const char* elfPath, ifstream& elfFile, vector<unique_fd>&
               .max_entries = max_entries,
               .map_flags = md[i].map_flags,
             };
-            if (isAtLeastKernelVersion(4, 14, 0))
+            if (kernelSupportsBpfObjectNames())
                 strlcpy(req.map_name, mapNames[i].c_str(), sizeof(req.map_name));
             fd.reset(bpf(BPF_MAP_CREATE, req));
             saved_errno = errno;
@@ -1027,7 +1046,7 @@ static int loadCodeSections(const char* elfPath, vector<codeSection>& cs, const 
               .log_size = static_cast<__u32>(log_buf.size()),
               .expected_attach_type = cs[i].expected_attach_type,
             };
-            if (isAtLeastKernelVersion(4, 14, 0))
+            if (kernelSupportsBpfObjectNames())
                 strlcpy(req.prog_name, cs[i].name.c_str(), sizeof(req.prog_name));
             fd.reset(bpf(BPF_PROG_LOAD, req));
 
