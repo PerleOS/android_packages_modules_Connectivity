@@ -71,7 +71,17 @@ static void verifyPerms(const char * const path,
     char b[255] = {};
     int v = lgetxattr(path, "security.selinux", &b, sizeof(b));
     if (v < 0) ALOGF("lgetxattr '%s' errno=%d", path, errno);
-    if (strncmp(ctxt, b, sizeof(b))) ALOGF("context of '%s' is '%s' != '%s'", path, b, ctxt);
+    if (strncmp(ctxt, b, sizeof(b))) {
+        // Kernels without per-file labelling of bpffs (present in Android common kernels, missing
+        // from some vendor 4.14 kernels) give every bpffs object the filesystem default context.
+        // SELinux then cannot tell the subdirectories apart, but the layout is still the expected
+        // one, so accept exactly that default and keep every other mismatch fatal.
+        if (!strncmp("u:object_r:fs_bpf:s0", b, sizeof(b))) {
+            ALOGW("context of '%s' is the bpffs default '%s', not '%s'", path, b, ctxt);
+        } else {
+            ALOGF("context of '%s' is '%s' != '%s'", path, b, ctxt);
+        }
+    }
 
     int fd = -1;
 
