@@ -116,6 +116,10 @@ import java.util.concurrent.RejectedExecutionException;
 @SystemService(Context.CONNECTIVITY_SERVICE)
 public class ConnectivityManager {
     private static final String TAG = "ConnectivityManager";
+
+    // Set once isUidNetworkingBlocked has found the BPF maps unreachable, to log it only once.
+    private static volatile boolean sUidNetworkingBlockedUnavailable = false;
+
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
 
     // TODO : remove this class when udc-mainline-prod is abandoned and android.net.flags.Flags is
@@ -6286,7 +6290,19 @@ public class ConnectivityManager {
         if (!SdkLevel.isAtLeastU()) {
             Log.wtf(TAG, "isUidNetworkingBlocked is not supported on pre-U devices");
         }
-        final BpfNetMapsReader reader = BpfNetMapsReader.getInstance();
+        final BpfNetMapsReader reader;
+        try {
+            reader = BpfNetMapsReader.getInstance();
+        } catch (ExceptionInInitializerError | NoClassDefFoundError e) {
+            // The maps cannot be opened, e.g. when the kernel lacks per-file bpffs labels
+            // and the caller's SELinux domain cannot read the default label. Report the uid
+            // as not blocked, as before this API existed, instead of crashing the caller.
+            if (!sUidNetworkingBlockedUnavailable) {
+                sUidNetworkingBlockedUnavailable = true;
+                Log.e(TAG, "isUidNetworkingBlocked: cannot open the BPF maps", e);
+            }
+            return false;
+        }
         // Note that before V, the data saver status in bpf is written by ConnectivityService
         // when receiving {@link #ACTION_RESTRICT_BACKGROUND_CHANGED}. Thus,
         // the status is not synchronized.
